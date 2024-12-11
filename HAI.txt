@@ -1,0 +1,720 @@
+This is the Gradiorum HAI Platform code compilation. The following files will be recreated by the provided decompilation script into a directory named HAI_Platform. Some code sections are placeholders and may need further implementation by you.
+
+===
+File: HAI_Platform/configs/templates_config.json
+===
+{
+  "default": {
+    "system": "You are a helpful assistant.",
+    "user_template": "<|USER|>: {prompt}\n",
+    "assistant_template": "<|ASSISTANT|>: {response}\n"
+  },
+  "gpt-4": {
+    "system": "You are a helpful assistant.",
+    "user_template": "User: {prompt}\n",
+    "assistant_template": "Assistant: {response}\n"
+  },
+  "llama-2": {
+    "system": "<s>[INST] <<SYS>> {system_msg} <</SYS>>\n{prompt} [/INST]",
+    "assistant_template": "{response}"
+  }
+}
+
+===
+File: HAI_Platform/configs/model_config.json
+===
+{
+  "models": {
+    "gpt-4": {
+      "backend": "pytorch",
+      "tokenizer_name": "openai/gpt-4",
+      "model_name": "gpt-4"
+    },
+    "llama-2": {
+      "backend": "vllm",
+      "tokenizer_name": "meta-llama/Llama-2-7b-chat-hf",
+      "model_name": "meta-llama/Llama-2-7b-chat-hf"
+    },
+    "custom-model": {
+      "backend": "pytorch",
+      "tokenizer_name": "hf-internal-testing/tiny-random-llama",
+      "model_name": "hf-internal-testing/tiny-random-llama"
+    }
+  }
+}
+
+===
+File: HAI_Platform/configs/db_config.json
+===
+{
+  "database_url": "sqlite:///./hai_platform.db"
+}
+
+===
+File: HAI_Platform/configs/backend_config.json
+===
+{
+  "max_tokens": 512,
+  "temperature": 0.7,
+  "top_k": 50,
+  "top_p": 0.9,
+  "timeout_seconds": 30
+}
+
+===
+File: HAI_Platform/backend/__init__.py
+===
+# Empty or can contain initialization logic if needed
+
+===
+File: HAI_Platform/backend/database/db.py
+===
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+import json
+import os
+
+with open(os.path.join(os.path.dirname(__file__), "..", "..", "configs", "db_config.json"), "r") as f:
+    db_config = json.load(f)
+
+DATABASE_URL = db_config["database_url"]
+
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+===
+File: HAI_Platform/backend/database/models.py
+===
+from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey
+from sqlalchemy.orm import relationship
+from datetime import datetime
+from .db import Base
+
+class UserLog(Base):
+    __tablename__ = "user_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, default="anonymous")
+    prompt = Column(Text)
+    response = Column(Text)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+class Feedback(Base):
+    __tablename__ = "feedback"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, default="anonymous")
+    interaction_id = Column(Integer, ForeignKey("user_logs.id"))
+    feedback_type = Column(String)  # e.g. "accept", "reject", "ranking", "dpo_corrected"
+    details = Column(Text)
+
+    interaction = relationship("UserLog", backref="feedback")
+
+class EyeTrackingData(Base):
+    __tablename__ = "eye_tracking_data"
+    id = Column(Integer, primary_key=True, index=True)
+    interaction_id = Column(Integer, ForeignKey("user_logs.id"))
+    x = Column(Float)
+    y = Column(Float)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    interaction = relationship("UserLog", backref="eye_tracking")
+
+===
+File: HAI_Platform/backend/database/schemas.py
+===
+from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional
+
+class UserLogCreate(BaseModel):
+    user_id: Optional[str] = "anonymous"
+    prompt: str
+    response: str
+
+class FeedbackCreate(BaseModel):
+    user_id: Optional[str] = "anonymous"
+    interaction_id: int
+    feedback_type: str
+    details: str
+
+class EyeTrackingCreate(BaseModel):
+    interaction_id: int
+    x: float
+    y: float
+
+===
+File: HAI_Platform/backend/database/crud.py
+===
+from sqlalchemy.orm import Session
+from .models import UserLog, Feedback, EyeTrackingData
+from .schemas import UserLogCreate, FeedbackCreate, EyeTrackingCreate
+
+def create_user_log(db: Session, log: UserLogCreate):
+    db_log = UserLog(
+        user_id=log.user_id,
+        prompt=log.prompt,
+        response=log.response
+    )
+    db.add(db_log)
+    db.commit()
+    db.refresh(db_log)
+    return db_log
+
+def create_feedback(db: Session, fb: FeedbackCreate):
+    db_fb = Feedback(
+        user_id=fb.user_id,
+        interaction_id=fb.interaction_id,
+        feedback_type=fb.feedback_type,
+        details=fb.details
+    )
+    db.add(db_fb)
+    db.commit()
+    db.refresh(db_fb)
+    return db_fb
+
+def create_eye_tracking(db: Session, et: EyeTrackingCreate):
+    db_et = EyeTrackingData(
+        interaction_id=et.interaction_id,
+        x=et.x,
+        y=et.y
+    )
+    db.add(db_et)
+    db.commit()
+    db.refresh(db_et)
+    return db_et
+
+===
+File: HAI_Platform/backend/inference/__init__.py
+===
+# init for inference module
+
+===
+File: HAI_Platform/backend/inference/engines/pytorch_engine.py
+===
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+class PyTorchEngine:
+    def __init__(self, model_name, max_tokens=512, temperature=0.7, top_k=50, top_p=0.9):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+        self.model = AutoModelForCausalLM.from_pretrained(model_name)
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.top_k = top_k
+        self.top_p = top_p
+
+    def generate(self, prompt):
+        input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
+        outputs = self.model.generate(
+            input_ids,
+            max_new_tokens=self.max_tokens,
+            do_sample=True,
+            temperature=self.temperature,
+            top_k=self.top_k,
+            top_p=self.top_p
+        )
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+===
+File: HAI_Platform/backend/inference/engines/vllm_engine.py
+===
+# Placeholder for vLLM engine integration
+
+class VLLMEngine:
+    def __init__(self, model_name, max_tokens=512, temperature=0.7, top_k=50, top_p=0.9):
+        self.model_name = model_name
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.top_k = top_k
+        self.top_p = top_p
+
+    def generate(self, prompt):
+        return prompt + " [vLLM generated response - placeholder]"
+
+===
+File: HAI_Platform/backend/inference/engines/deepseek_engine.py
+===
+# Placeholder for DeepSeek engine
+class DeepSeekEngine:
+    def __init__(self, model_name, **kwargs):
+        self.model_name = model_name
+    
+    def generate(self, prompt):
+        return prompt + " [DeepSeek fancy reasoning - placeholder]"
+
+===
+File: HAI_Platform/backend/inference/test_time_compute/dense_verifier.py
+===
+class DenseVerifier:
+    def __init__(self, verifier_model_name="some-scoring-model"):
+        pass
+
+    def score(self, prompt, candidates):
+        scores = []
+        for c in candidates:
+            # Simple length-based scoring placeholder
+            scores.append(len(c))
+        return scores
+
+===
+File: HAI_Platform/backend/inference/test_time_compute/adaptive_distribution.py
+===
+class AdaptiveDistribution:
+    def refine(self, prompt, engine, initial_output):
+        # Placeholder, just return initial
+        return initial_output
+
+===
+File: HAI_Platform/backend/inference/test_time_compute/entropix.py
+===
+class EntropixSampler:
+    def sample(self, prompt, engine):
+        return engine.generate(prompt) + " [Entropix adjustments]"
+
+===
+File: HAI_Platform/backend/inference/test_time_compute/mcts.py
+===
+class MCTSSampler:
+    def search(self, prompt, engine):
+        # Placeholder MCTS logic
+        return engine.generate(prompt) + " [MCTS exploration - placeholder]"
+
+===
+File: HAI_Platform/backend/inference/test_time_compute/deepseek.py
+===
+class DeepSeekCompute:
+    def extended_thinking(self, prompt, engine):
+        return engine.generate(prompt) + " [DeepSeek extended reasoning - placeholder]"
+
+===
+File: HAI_Platform/backend/inference/inference_manager.py
+===
+import json
+import os
+
+from .engines.pytorch_engine import PyTorchEngine
+from .engines.vllm_engine import VLLMEngine
+from .engines.deepseek_engine import DeepSeekEngine
+
+from .test_time_compute.dense_verifier import DenseVerifier
+from .test_time_compute.adaptive_distribution import AdaptiveDistribution
+from .test_time_compute.entropix import EntropixSampler
+from .test_time_compute.mcts import MCTSSampler
+from .test_time_compute.deepseek import DeepSeekCompute
+
+class InferenceManager:
+    def __init__(self):
+        with open(os.path.join(os.path.dirname(__file__), "..", "..", "configs", "model_config.json")) as f:
+            self.model_config = json.load(f)
+        with open(os.path.join(os.path.dirname(__file__), "..", "..", "configs", "backend_config.json")) as f:
+            self.backend_config = json.load(f)
+
+        self.verifier = DenseVerifier()
+        self.adaptive = AdaptiveDistribution()
+        self.entropix = EntropixSampler()
+        self.mcts = MCTSSampler()
+        self.deepseek_comp = DeepSeekCompute()
+
+    def get_engine(self, model_name):
+        model_info = self.model_config["models"].get(model_name, None)
+        if model_info is None:
+            raise ValueError(f"Model {model_name} not found in config")
+
+        backend = model_info["backend"]
+        if backend == "pytorch":
+            return PyTorchEngine(
+                model_name=model_info["model_name"],
+                max_tokens=self.backend_config["max_tokens"],
+                temperature=self.backend_config["temperature"],
+                top_k=self.backend_config["top_k"],
+                top_p=self.backend_config["top_p"]
+            )
+        elif backend == "vllm":
+            return VLLMEngine(
+                model_name=model_info["model_name"],
+                max_tokens=self.backend_config["max_tokens"],
+                temperature=self.backend_config["temperature"],
+                top_k=self.backend_config["top_k"],
+                top_p=self.backend_config["top_p"]
+            )
+        else:
+            return DeepSeekEngine(model_info["model_name"])
+
+    def run_inference(self, prompt, model_name, method="none"):
+        engine = self.get_engine(model_name)
+        if method == "none":
+            return engine.generate(prompt)
+        elif method == "dense_verifier":
+            candidates = [engine.generate(prompt) for _ in range(3)]
+            scores = self.verifier.score(prompt, candidates)
+            best_idx = scores.index(max(scores))
+            return candidates[best_idx]
+        elif method == "adaptive_distribution":
+            initial = engine.generate(prompt)
+            return self.adaptive.refine(prompt, engine, initial)
+        elif method == "entropix":
+            return self.entropix.sample(prompt, engine)
+        elif method == "mcts":
+            return self.mcts.search(prompt, engine)
+        elif method == "deepseek":
+            return self.deepseek_comp.extended_thinking(prompt, engine)
+        else:
+            return engine.generate(prompt)
+
+===
+File: HAI_Platform/backend/inference/prompt_templates.py
+===
+import json
+import os
+
+with open(os.path.join(os.path.dirname(__file__), "..", "..", "configs", "templates_config.json")) as f:
+    TEMPLATES = json.load(f)
+
+def build_prompt(model_name, user_prompt, system_msg=None, response_placeholder="{response}"):
+    template = TEMPLATES.get(model_name, TEMPLATES["default"])
+    system = template.get("system", "")
+    user_t = template.get("user_template", "{prompt}")
+    assistant_t = template.get("assistant_template", "{response}")
+
+    if system_msg is None:
+        system_msg = system
+
+    final_prompt = ""
+    if system_msg:
+        final_prompt += system_msg + "\n"
+    final_prompt += user_t.format(prompt=user_prompt)
+    return final_prompt, assistant_t
+
+===
+File: HAI_Platform/backend/rlhf/__init__.py
+===
+# init for rlhf
+
+===
+File: HAI_Platform/backend/rlhf/kto.py
+===
+class KTOHandler:
+    def process_feedback(self, interaction_id, accepted, db):
+        pass
+
+===
+File: HAI_Platform/backend/rlhf/ppo.py
+===
+class PPOHandler:
+    def collect_feedback(self, interaction_id, rankings, db):
+        pass
+
+===
+File: HAI_Platform/backend/rlhf/dpo.py
+===
+class DPOHandler:
+    def process_feedback(self, interaction_id, chosen, rejected, user_correction, db):
+        pass
+
+===
+File: HAI_Platform/backend/data_preparation/__init__.py
+===
+# data preparation init
+
+===
+File: HAI_Platform/backend/data_preparation/dataset_utils.py
+===
+import pandas as pd
+
+def prepare_dataset_for_inference(df, text_col, class_col=None, supp_columns=None, leading_columns=None):
+    df['combined_text'] = ""
+    if leading_columns:
+        for col in leading_columns:
+            df['combined_text'] += df[col].fillna('') + " "
+    df['combined_text'] += df[text_col].fillna('')
+    if supp_columns:
+        for col in supp_columns:
+            df['combined_text'] += " " + df[col].fillna('')
+
+    x_data = df['combined_text'].tolist()
+    y_data = df[class_col].tolist() if class_col else None
+    return {"x": x_data, "y": y_data}
+
+===
+File: HAI_Platform/backend/data_preparation/parsing_utils.py
+===
+import re
+
+def parse_output_for_answer(output):
+    pattern = r"<Tag>\[(.*?)\]</Tag>"
+    matches = re.findall(pattern, output)
+    return matches
+
+===
+File: HAI_Platform/backend/data_preparation/annotation_utils.py
+===
+def rlhf_sample(prompt, chosen, rejected):
+    return {
+        "prompt": prompt,
+        "chosen": chosen,
+        "rejected": rejected
+    }
+
+===
+File: HAI_Platform/backend/training/__init__.py
+===
+# training init
+
+===
+File: HAI_Platform/backend/training/lora_training.py
+===
+def train_lora(dataset_path, base_model, output_dir):
+    pass
+
+===
+File: HAI_Platform/backend/training/qlora_training.py
+===
+def train_qlora(dataset_path, base_model, output_dir):
+    pass
+
+===
+File: HAI_Platform/backend/training/dpo_training.py
+===
+def train_dpo(dataset_path, base_model, output_dir):
+    pass
+
+===
+File: HAI_Platform/backend/training/ppo_training.py
+===
+def train_ppo(dataset_path, base_model, output_dir):
+    pass
+
+===
+File: HAI_Platform/backend/training/posttraining_scripts.py
+===
+def post_train_cleanup():
+    pass
+
+===
+File: HAI_Platform/backend/research/__init__.py
+===
+# research init
+
+===
+File: HAI_Platform/backend/research/eye_tracking.py
+===
+def start_eyetracking_session(interaction_id):
+    pass
+
+===
+File: HAI_Platform/backend/research/attention_logging.py
+===
+def log_attention(interaction_id, attention_data):
+    pass
+
+===
+File: HAI_Platform/backend/research/bio_signals.py
+===
+def record_bio_signals(interaction_id, signal_data):
+    pass
+
+===
+File: HAI_Platform/backend/websocket_manager.py
+===
+from typing import Dict
+from fastapi import WebSocket
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+
+    async def connect(self, websocket: WebSocket, client_id: str):
+        await websocket.accept()
+        self.active_connections[client_id] = websocket
+
+    def disconnect(self, client_id: str):
+        self.active_connections.pop(client_id, None)
+
+    async def send_message(self, message: str, client_id: str):
+        if client_id in self.active_connections:
+            await self.active_connections[client_id].send_text(message)
+
+manager = ConnectionManager()
+
+===
+File: HAI_Platform/backend/message_queue.py
+===
+class MessageQueue:
+    def __init__(self):
+        pass
+
+    def enqueue(self, message):
+        pass
+
+    def dequeue(self):
+        pass
+
+===
+File: HAI_Platform/backend/main_app.py
+===
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, HTTPException
+from sqlalchemy.orm import Session
+from .database.db import get_db, Base, engine
+from .database.schemas import UserLogCreate, FeedbackCreate
+from .database.crud import create_user_log, create_feedback
+from .inference.inference_manager import InferenceManager
+from .websocket_manager import manager
+import json
+
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI()
+inference_manager = InferenceManager()
+
+@app.post("/chat")
+def chat(prompt: str, model_name: str = "gpt-4", method: str = "none", user_id: str = "anonymous", db: Session = Depends(get_db)):
+    response = inference_manager.run_inference(prompt, model_name, method)
+    log = create_user_log(db, UserLogCreate(user_id=user_id, prompt=prompt, response=response))
+    return {"prompt": prompt, "response": response, "interaction_id": log.id}
+
+@app.post("/feedback")
+def feedback(interaction_id: int, feedback_type: str, details: str, user_id: str = "anonymous", db: Session = Depends(get_db)):
+    fb = create_feedback(db, FeedbackCreate(user_id=user_id, interaction_id=interaction_id, feedback_type=feedback_type, details=details))
+    return {"status": "success", "feedback_id": fb.id}
+
+@app.websocket("/ws/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    await manager.connect(websocket, client_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            if message.get('type') == 'eye_tracking':
+                # Placeholder for eye-tracking data handling
+                pass
+    except WebSocketDisconnect:
+        manager.disconnect(client_id)
+
+===
+File: HAI_Platform/frontend/gradio_interface.py
+===
+import gradio as gr
+import requests
+
+API_URL = "http://0.0.0.0:8000"
+
+def chat_submit(prompt, model_name, method, rl_method):
+    resp = requests.post(f"{API_URL}/chat", json={"prompt": prompt, "model_name": model_name, "method": method, "user_id":"ui_user"})
+    data = resp.json()
+    return data["response"], data["interaction_id"]
+
+def send_feedback(interaction_id, feedback_type, details):
+    resp = requests.post(f"{API_URL}/feedback", json={"interaction_id": interaction_id, "feedback_type": feedback_type, "details": details, "user_id":"ui_user"})
+    return resp.json()
+
+def build_interface():
+    with gr.Blocks() as demo:
+        with gr.Tab("Chat Mode"):
+            model_select = gr.Dropdown(["gpt-4", "llama-2", "custom-model"], label="Model")
+            method_select = gr.Dropdown(["none", "dense_verifier", "adaptive_distribution", "entropix", "mcts", "deepseek"], label="Test-time Compute Method")
+            rl_mode = gr.Dropdown(["none", "kto", "ppo", "dpo"], label="RLHF Mode")
+            prompt_box = gr.Textbox(label="Prompt")
+            submit_btn = gr.Button("Submit")
+            outputs_box = gr.Textbox(label="Model Output", interactive=False)
+            hidden_interaction_id = gr.Variable()
+
+            def on_submit(prompt, model_name, method, rl_method):
+                resp, interaction_id = chat_submit(prompt, model_name, method, rl_method)
+                return resp, interaction_id
+
+            submit_btn.click(on_submit, [prompt_box, model_select, method_select, rl_mode], [outputs_box, hidden_interaction_id])
+
+            feedback_type = gr.Radio(["accept", "reject"], label="Feedback")
+            feedback_btn = gr.Button("Submit Feedback")
+
+            def on_feedback(feedback_value, interaction_id):
+                return send_feedback(interaction_id, feedback_value, "User feedback")
+
+            feedback_btn.click(on_feedback, [feedback_type, hidden_interaction_id], None)
+
+        with gr.Tab("Data Import & Batch"):
+            gr.Markdown("Upload CSV and select columns...")
+
+        with gr.Tab("RLHF Data Collection"):
+            gr.Markdown("PPO / DPO Interface...")
+
+        with gr.Tab("Research Mode"):
+            gr.Markdown("Eye Tracking / EEG integration...")
+
+        with gr.Tab("Settings"):
+            gr.Markdown("Adjust model params, templates, etc.")
+
+    return demo
+
+if __name__ == "__main__":
+    ui = build_interface()
+    ui.launch(server_name="0.0.0.0", server_port=7860)
+
+===
+File: HAI_Platform/frontend/templates/eye_tracking_view.html
+===
+<!DOCTYPE html>
+<html>
+<head>
+<title>Eye Tracking</title>
+<script>
+// Insert actual eye-tracking JS code here
+</script>
+</head>
+<body>
+<div id="prompt_area">
+  <h1>Focus on this prompt</h1>
+</div>
+</body>
+</html>
+
+===
+File: HAI_Platform/scripts/run_server.sh
+===
+#!/bin/bash
+uvicorn backend.main_app:app --host 0.0.0.0 --port 8000
+
+===
+File: HAI_Platform/scripts/run_training.sh
+===
+#!/bin/bash
+# Example script to run DPO training
+python -m backend.training.dpo_training --dataset_path dpo_samples.json --base_model llama-2 --output_dir dpo_finetuned
+
+===
+File: HAI_Platform/scripts/data_conversion_scripts.py
+===
+def convert_logs_to_dpo_format():
+    # Placeholder for conversion logic
+    pass
+
+===
+File: HAI_Platform/tests/test_inference.py
+===
+def test_inference():
+    pass
+
+===
+File: HAI_Platform/tests/test_database.py
+===
+def test_database():
+    pass
+
+===
+File: HAI_Platform/tests/test_rlhf.py
+===
+def test_rlhf():
+    pass
+
+===
+File: HAI_Platform/tests/test_end_to_end.py
+===
+def test_end_to_end():
+    pass

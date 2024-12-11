@@ -1,0 +1,1 @@
+This is the Gradiorum HAI Platform code compilation. The following files will be recreated by the provided decompilation script into a directory named HAI_Platform. Some code sections are placeholders and may need further implementation by you.

@@ -1,0 +1,16 @@
+{
+  "default": {
+    "system": "You are a helpful assistant.",
+    "user_template": "<|USER|>: {prompt}\n",
+    "assistant_template": "<|ASSISTANT|>: {response}\n"
+  },
+  "gpt-4": {
+    "system": "You are a helpful assistant.",
+    "user_template": "User: {prompt}\n",
+    "assistant_template": "Assistant: {response}\n"
+  },
+  "llama-2": {
+    "system": "<s>[INST] <<SYS>> {system_msg} <</SYS>>\n{prompt} [/INST]",
+    "assistant_template": "{response}"
+  }
+}

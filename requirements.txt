@@ -1,0 +1,18 @@
+fastapi==0.95.2
+uvicorn[standard]==0.22.0
+sqlalchemy==2.0.21
+pydantic==1.10.7
+transformers==4.31.0
+torch==2.0.1
+requests==2.31.0
+gradio==3.23.0
+python-dotenv==1.0.0
+
+# vLLM - If you plan to use vLLM, install it (check the latest stable version)
+vllm==0.1.2
+
+# If you plan to use PEFT or QLoRA techniques:
+peft==0.4.0
+bitsandbytes==0.39.0
+
+# If you use any eye-tracking integrations or other specialized libraries, add them here

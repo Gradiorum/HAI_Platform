@@ -1,0 +1,19 @@
+{
+  "models": {
+    "gpt-4": {
+      "backend": "pytorch",
+      "tokenizer_name": "openai/gpt-4",
+      "model_name": "gpt-4"
+    },
+    "llama-2": {
+      "backend": "vllm",
+      "tokenizer_name": "meta-llama/Llama-2-7b-chat-hf",
+      "model_name": "meta-llama/Llama-2-7b-chat-hf"
+    },
+    "custom-model": {
+      "backend": "pytorch",
+      "tokenizer_name": "hf-internal-testing/tiny-random-llama",
+      "model_name": "hf-internal-testing/tiny-random-llama"
+    }
+  }
+}

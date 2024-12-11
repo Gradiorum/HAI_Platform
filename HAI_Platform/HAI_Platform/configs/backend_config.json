@@ -1,0 +1,7 @@
+{
+  "max_tokens": 512,
+  "temperature": 0.7,
+  "top_k": 50,
+  "top_p": 0.9,
+  "timeout_seconds": 30
+}
